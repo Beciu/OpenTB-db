@@ -1,0 +1,42 @@
+name: Copy the weekly files
+
+# The OpenTB server writes each finished week's files on Monday at 00:20
+# (Bucharest). This copies new ones here; a week already here is never
+# replaced.
+on:
+  schedule:
+    - cron: '35 22 * * 0'   # Monday 00:35 Bucharest in winter, 01:35 in summer
+    - cron: '35 */6 * * *'  # every 6 hours, in case the server was off
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: copy
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy new weeks
+        env:
+          SERVER: https://beciuhosting.go.ro:1111
+        run: |
+          set -eu
+          list=$(curl -fsS -m 60 "$SERVER/api/v1/exports")
+          added=0
+          for kind in ac-reports fleet; do
+            mkdir -p "$kind"
+            for f in $(echo "$list" | jq -r --arg k "$kind" '.[$k][]'); do
+              [ -e "$kind/$f" ] && continue
+              curl -fsS -m 300 -o "$kind/$f" "$SERVER/api/v1/exports/$kind/$f"
+              added=$((added + 1))
+            done
+          done
+          if [ "$added" -eq 0 ]; then echo "nothing new"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Weekly files: $added new"
+          git push
